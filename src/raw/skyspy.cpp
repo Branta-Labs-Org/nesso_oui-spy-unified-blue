@@ -421,6 +421,12 @@ void setup() {
   esp_wifi_set_promiscuous_rx_cb(&callback);
   esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
   
+  // Mute benign parse-advertisement noise from the underlying BLE lib when
+  // peripherals send zero-length ADV packets. Our callback already bails on
+  // those; this just keeps Serial clean for JSON consumers.
+  esp_log_level_set("BLEAdvertisedDevice", ESP_LOG_NONE);
+  esp_log_level_set("NimBLEAdvertisedDevice", ESP_LOG_NONE);
+
   NimBLEDevice::init("DroneID");
   pBLEScan = NimBLEDevice::getScan();
   pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
