@@ -48,7 +48,7 @@ void callback(void *, wifi_promiscuous_pkt_type_t);
 void send_json_fast(const id_data *UAV);
 void buzzerTask(void *parameter);
 
-#define MAX_UAVS 8
+#define MAX_UAVS 32
 id_data uavs[MAX_UAVS] = {0};
 NimBLEScan* pBLEScan = nullptr;
 ODID_UAS_Data UAS_data;
