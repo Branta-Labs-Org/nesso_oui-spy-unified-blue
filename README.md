@@ -40,7 +40,7 @@ Detects Flock Safety surveillance cameras, Raven gunshot detectors, and related 
 
 **Detection methods:**
 
-- **MAC prefix matching** — 20 known Flock Safety OUI prefixes (FS Ext Battery, Flock WiFi modules)
+- **MAC prefix matching** — 42 known Flock Safety OUI prefixes sourced from **OrdoOuroborous / [@NitekryDPaul](https://github.com/nitekry)**'s [nite-oui-collection](https://github.com/nitekry/nite-oui-collection) (41) plus Michael / DeFlockJoplin's drive-test addition `82:6b:f2` (1). All research credit to @NitekryDPaul for the underlying promiscuous-mode work; this firmware just consumes his list.
 - **BLE device name patterns** — case-insensitive substring matching for `FS Ext Battery`, `Penguin`, `Flock`, `Pigvision`
 - **BLE manufacturer company ID** — `0x09C8` (XUNTONG), associated with Flock Safety hardware. Catches devices even when no name is broadcast. *Sourced from [wgreenberg/flock-you](https://github.com/wgreenberg/flock-you).*
 - **Raven service UUID matching** — identifies Raven gunshot detection units by their BLE GATT service UUIDs (device info, GPS, power, network, upload, error, legacy health/location services)
