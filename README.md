@@ -102,13 +102,27 @@ Each mode creates its own AP. When switching modes, **your phone/laptop will aut
 
 ## Hardware
 
-**Board:** Seeed Studio XIAO ESP32-S3
+### Seeed Studio XIAO ESP32-S3 (original target)
 
 | Pin | Function |
 |-----|----------|
 | GPIO 3 | Piezo buzzer |
 | GPIO 21 | NeoPixel LED |
 | GPIO 0 | BOOT button (hold 2s to return to mode selector) |
+
+### Arduino Nesso N1 (ESP32-C6 port)
+
+Build from `oui_spy_nesso/` with `arduino-cli` (see `oui_spy_nesso/arduino-cli.yaml`).
+
+| Control | Location | Function |
+|---------|----------|----------|
+| **KEY1** | **Front** (face, near display) | Hold ~1.5s → mode selector |
+| **KEY2** | **Side** (edge) | Reserved (not used by firmware yet) |
+| **Power/reset** | Side (separate from KEY1/KEY2) | Single press = reboot; long press = bootloader |
+| Display | Front | Mode name, battery, hits/RSSI, alerts |
+| Buzzer | Internal | Alert tones (mode-specific) |
+
+Default boot mode on Nesso: **Flock-You**. Hold **KEY1 (front)** during power-on to force the web mode selector instead.
 
 ---
 
