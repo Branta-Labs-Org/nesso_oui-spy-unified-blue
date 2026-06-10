@@ -183,11 +183,7 @@ static unsigned long fyLastHB = 0;
 static NimBLEScan* fyBLEScan = NULL;
 static AsyncWebServer fyServer(80);
 static DNSServer flockyouDNS;
-#ifdef NESSO_N1
-static const bool fyWebEnabled = false;  // AsyncWebServer crashes on C6 lwIP lock
-#else
 static const bool fyWebEnabled = true;
-#endif
 static bool fyRoutesRegistered = false;
 static bool fyServerStarted = false;
 static bool fyDnsStarted = false;

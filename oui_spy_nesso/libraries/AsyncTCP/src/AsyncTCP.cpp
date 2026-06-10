@@ -75,10 +75,8 @@ namespace {
 #if ASYNC_TCP_NEEDS_CORE_GUARD
 struct tcp_core_guard {
   bool do_lock;
-  inline tcp_core_guard() : do_lock(!sys_thread_tcpip(LWIP_CORE_LOCK_QUERY_HOLDER)) {
-    if (do_lock) {
-      LOCK_TCPIP_CORE();
-    }
+  inline tcp_core_guard() : do_lock(true) {
+    LOCK_TCPIP_CORE();
   }
   inline ~tcp_core_guard() {
     if (do_lock) {

@@ -112,7 +112,16 @@ Each mode creates its own AP. When switching modes, **your phone/laptop will aut
 
 ### Arduino Nesso N1 (ESP32-C6 port)
 
-Build from `oui_spy_nesso/` with `arduino-cli` (see `oui_spy_nesso/arduino-cli.yaml`).
+Build from `oui_spy_nesso/` with `arduino-cli`. **Use the project build script** so the patched vendored `AsyncTCP` is linked (required for the Flock-You web dashboard on ESP32-C6):
+
+```bash
+cd oui_spy_nesso
+./scripts/compile-nesso.sh --upload /dev/cu.usbmodem14401
+```
+
+The script creates `.arduino-cli-user/` (symlinks to your global libs except `AsyncTCP`, which comes from `oui_spy_nesso/libraries/AsyncTCP`). Plain `arduino-cli compile` may pick up the old `~/Documents/Arduino/libraries/AsyncTCP@1.1.4` and crash when starting the web server.
+
+See also `oui_spy_nesso/arduino-cli-nesso.yaml`.
 
 | Control | Location | Function |
 |---------|----------|----------|

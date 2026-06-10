@@ -75,9 +75,12 @@ namespace {
 #if ASYNC_TCP_NEEDS_CORE_GUARD
 struct tcp_core_guard {
   bool do_lock;
-  inline tcp_core_guard() : do_lock(!sys_thread_tcpip(LWIP_CORE_LOCK_QUERY_HOLDER)) {
-    if (do_lock) {
+  inline tcp_core_guard() : do_lock(false) {
+    // Use MARK_TCPIP_TASK, not QUERY_HOLDER: holder flag can be stale on
+    // the async_tcp task and skip LOCK_TCPIP_CORE(), causing tcp_alloc assert.
+    if (!sys_thread_tcpip(LWIP_CORE_MARK_TCPIP_TASK)) {
       LOCK_TCPIP_CORE();
+      do_lock = true;
     }
   }
   inline ~tcp_core_guard() {
