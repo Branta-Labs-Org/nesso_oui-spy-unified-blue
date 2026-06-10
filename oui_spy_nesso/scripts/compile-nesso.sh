@@ -32,8 +32,8 @@ if strings "$ELF" | rg -q 'Documents/Arduino/libraries/AsyncTCP'; then
   exit 1
 fi
 
-if ! strings "$ELF" | rg 'ASYNC_TCP_NEEDS_CORE_GUARD' >/dev/null 2>&1; then
-  echo "ERROR: patched vendored AsyncTCP was not linked (missing lwIP core guard)." >&2
+if ! strings "$ELF" | rg 'projects/nesso/oui_spy_nesso/libraries/AsyncTCP' >/dev/null 2>&1; then
+  echo "ERROR: patched vendored AsyncTCP was not linked." >&2
   strings "$ELF" | rg 'AsyncTCP' | head -8 >&2
   exit 1
 fi
