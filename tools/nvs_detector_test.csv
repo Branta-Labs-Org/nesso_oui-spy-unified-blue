@@ -1,0 +1,18 @@
+key,type,encoding,value
+nvs,namespace,,
+unified-mode,namespace,,
+mode,data,i32,1
+selector,data,u8,0
+ouispy,namespace,,
+filterCount,data,i32,2
+id_0,data,string,28:37:2f
+mac_0,data,u8,0
+desc_0,data,string,T-Deck OUI 28:37:2F
+id_1,data,string,name:meshtastic
+mac_1,data,u8,0
+desc_1,data,string,Meshtastic BLE name match
+buzzerEnabled,data,u8,1
+ledEnabled,data,u8,1
+configLocked,data,u8,1
+ap_ssid,data,string,snoopuntothem
+ap_password,data,string,astheysnoopuntous
