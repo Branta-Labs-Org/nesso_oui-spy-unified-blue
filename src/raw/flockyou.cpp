@@ -1505,15 +1505,24 @@ void setup() {
     fyBLEScan = NimBLEDevice::getScan();
     fyBLEScan->setScanCallbacks(new FYBLECallbacks(), true);
     fyBLEScan->setActiveScan(true);
+    // ESP32-C6 shares one 2.4GHz radio between BLE and WiFi. A ~100% scan
+    // duty cycle (window == interval) starves the softAP of airtime - it
+    // cannot even beacon, so the dashboard network disappears. Espressif's
+    // coexistence guidance (esp-idf #4940): the AP only gets the idle part
+    // of each scan interval, so keep the window well under the interval.
     fyBLEScan->setInterval(100);
-    fyBLEScan->setWindow(99);
+    fyBLEScan->setWindow(30);
 
     // Kick off the first scan right away. NimBLE-Arduino 2.x start() takes
     // milliseconds (0 = continuous); the original code passed seconds, so it
     // only listened for ~2 ms per cycle and saw almost nothing.
+#ifdef FY_DIAG_DISABLE_BLE
+    printf("[FLOCK-YOU] DIAG BUILD: BLE scanning DISABLED\n");
+#else
     fyBLEScan->start(0, false);
     fyLastBleScan = millis();
     printf("[FLOCK-YOU] BLE scanning ACTIVE\n");
+#endif
 
     // Crow calls play WHILE BLE is already scanning
     fyBootBeep();
@@ -1553,6 +1562,7 @@ void loop() {
 
     // BLE scanning cycle: keep a continuous scan running and periodically clear
     // the cached results to bound memory (detection happens in the callback).
+#ifndef FY_DIAG_DISABLE_BLE
     if (!fyBLEScan->isScanning()) {
         fyBLEScan->start(0, false);
     }
@@ -1560,6 +1570,7 @@ void loop() {
         fyBLEScan->clearResults();
         fyLastBleScan = millis();
     }
+#endif
 
     // Heartbeat tracking
     if (fyDeviceInRange) {

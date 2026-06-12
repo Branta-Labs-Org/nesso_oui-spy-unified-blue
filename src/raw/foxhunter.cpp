@@ -922,8 +922,13 @@ void startTrackingMode() {
     
     pBLEScan = NimBLEDevice::getScan();
     nimbleSetAdvertisedCallbacks(pBLEScan, new MyAdvertisedDeviceCallbacks());
-    pBLEScan->setInterval(16);    // 16ms intervals (maximum speed)
-    pBLEScan->setWindow(15);      // 15ms scan window (95% duty cycle)
+    // Foxhunter runs its web UI (softAP) alongside BLE scanning. The ESP32-C6
+    // has a single shared 2.4GHz radio: a ~95% BLE scan duty cycle starves the
+    // AP of airtime so it cannot beacon and the network disappears. The AP only
+    // gets the idle part of each scan interval (esp-idf #4940), so keep the
+    // window well under the interval. 30/100 is verified working on this board.
+    pBLEScan->setInterval(100);
+    pBLEScan->setWindow(30);
     pBLEScan->setActiveScan(true);
     pBLEScan->setDuplicateFilter(false);
     
