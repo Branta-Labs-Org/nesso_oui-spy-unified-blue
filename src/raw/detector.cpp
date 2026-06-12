@@ -57,6 +57,7 @@ unsigned long modeSwitchScheduled = 0; // When to switch modes (0 = not schedule
 unsigned long deviceResetScheduled = 0; // When to reset device (0 = not scheduled)
 unsigned long normalRestartScheduled = 0; // When to do normal restart (0 = not scheduled)
 static bool configWebStarted = false;
+static unsigned long configApStartMs = 0;
 
 // Serial output synchronization - avoid concurrent writes
 volatile bool newMatchFound = false;
@@ -1568,14 +1569,14 @@ void startConfigMode() {
     Serial.println("Password: " + AP_PASSWORD);
     Serial.println("Initializing WiFi AP...");
     
-    // Ensure WiFi is off first
-    WiFi.mode(WIFI_OFF);
-    delay(1000);
-    
-    // Start WiFi AP
+    // Go straight to AP mode. Do NOT toggle WIFI_OFF first: on the ESP32-C6
+    // that tears down the lwIP TCP/IP task and it isn't recreated cleanly,
+    // leaving lwip_task == NULL so AsyncTCP's server.begin() asserts/crashes.
+    // main.cpp already left WiFi off after its factory reset, so this mirrors
+    // the working Flock-You bring-up.
     Serial.println("Setting WiFi mode to AP...");
     WiFi.mode(WIFI_AP);
-    delay(500);
+    delay(100);
     
     Serial.println("Creating access point...");
     bool apStarted = WiFi.softAP(AP_SSID.c_str(), AP_PASSWORD.c_str());
@@ -1584,6 +1585,9 @@ void startConfigMode() {
         Serial.println("✓ Access Point created successfully!");
     } else {
         Serial.println("✗ Failed to create Access Point!");
+#ifdef NESSO_N1
+        esp_rom_printf("[DETECTOR] config mode: AP FAILED to start\n");
+#endif
         return;
     }
     
@@ -1592,15 +1596,20 @@ void startConfigMode() {
     IPAddress IP = WiFi.softAPIP();
     Serial.println("AP IP address: " + IP.toString());
     Serial.println("Config portal: http://" + IP.toString());
+#ifdef NESSO_N1
+    esp_rom_printf("[DETECTOR] config mode: AP '%s' up at %s (open http://%s)\n",
+                  AP_SSID.c_str(), IP.toString().c_str(), IP.toString().c_str());
+#endif
 
-    // Captive portal DNS - redirect all DNS queries to our AP IP
-    detectorDNS.start(53, "*", IP);
-    Serial.println("Captive portal DNS started");
+    // NOTE: DNS + web server TCP binds are deferred to loop() via
+    // detectorTryStartServer(), mirroring Flock-You's fyTryStartServer():
+    // bind only after the AP is confirmed up and the lwIP stack has settled.
     Serial.println("==============================\n");
     
     // NOW start the countdown - AP is fully ready and visible
     configStartTime = millis();
     lastConfigActivity = millis();
+    configApStartMs = millis();
     
     // Setup web server routes
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -2177,12 +2186,31 @@ void startConfigMode() {
         request->redirect("http://192.168.4.1/");
     });
 
+    // Routes are registered; the actual TCP bind happens later in loop() via
+    // detectorTryStartServer() once lwIP is ready (see note in startConfigMode).
+}
+
+// Deferred web/DNS startup for config mode. Binding lwIP listeners during
+// setup() crashes the ESP32-C6 (tcpip task not ready), so we wait until the
+// AP is up and the stack has settled, mirroring Flock-You's fyTryStartServer().
+void detectorTryStartServer() {
+    if (configWebStarted) {
+        return;
+    }
+    if (WiFi.softAPIP() == IPAddress(0, 0, 0, 0)) {
+        return;
+    }
+    if (millis() - configApStartMs < 1500) {
+        return;
+    }
+
     server.begin();
+    detectorDNS.start(53, "*", WiFi.softAPIP());
     configWebStarted = true;
 
-    if (isSerialConnected()) {
-        Serial.println("Web server started!");
-    }
+#ifdef NESSO_N1
+    esp_rom_printf("[DETECTOR] config web server + captive DNS started\n");
+#endif
 }
 
 // ================================
@@ -2481,7 +2509,10 @@ void loop() {
     unsigned long currentMillis = millis();
     
     if (currentMode == CONFIG_MODE) {
-        detectorDNS.processNextRequest();  // Captive portal DNS
+        detectorTryStartServer();          // Deferred web/DNS bind (C6-safe)
+        if (configWebStarted) {
+            detectorDNS.processNextRequest();  // Captive portal DNS
+        }
         // Check for scheduled normal restart (from burn-in config)
         if (normalRestartScheduled > 0 && currentMillis >= normalRestartScheduled) {
             if (isSerialConnected()) {
@@ -2517,32 +2548,18 @@ void loop() {
             return;
         }
         
-        // Check for config timeout 
-        if (targetFilters.size() == 0) {
-            // No saved filters - stay in config mode indefinitely
-            if (currentMillis - configStartTime > CONFIG_TIMEOUT && lastConfigActivity == configStartTime) {
-                if (isSerialConnected()) {
-                    Serial.println("No one connected and no saved filters - staying in config mode");
-                    Serial.println("Connect to '" + AP_SSID + "' AP to configure your first filters!");
-                }
-            }
-        } else if (targetFilters.size() > 0) {
-            // Have saved filters - timeout only if no one connected
-            if (currentMillis - configStartTime > CONFIG_TIMEOUT && lastConfigActivity == configStartTime) {
-                if (isSerialConnected()) {
-                    Serial.println("No one connected within 20s - using saved filters, switching to scanning mode");
-                }
-                startScanningMode();
-            } else if (lastConfigActivity > configStartTime) {
-                // Someone connected - wait for them to submit (no timeout)
-                if (isSerialConnected() && currentMillis - configStartTime > CONFIG_TIMEOUT) {
-                    static unsigned long lastConnectedMsg = 0;
-                    if (currentMillis - lastConnectedMsg > 30000) { // Print every 30s
-                        Serial.println("Web interface connected - waiting for configuration submission...");
-                        lastConnectedMsg = currentMillis;
-                    }
-                }
-            }
+        // Config mode is only entered when the configuration is UNLOCKED, which
+        // means the user is actively (re)configuring. Stay here indefinitely so
+        // the AP/web UI never disappears out from under them; the device leaves
+        // config mode only on an explicit web action (save -> scanning, or
+        // lock-config -> reboot). Emit a periodic heartbeat on the ROM console.
+        static unsigned long lastCfgHeartbeat = 0;
+        if (currentMillis - lastCfgHeartbeat >= 15000) {
+            lastCfgHeartbeat = currentMillis;
+#ifdef NESSO_N1
+            esp_rom_printf("[DETECTOR] config mode: AP up, %d filter(s), waiting for web config\n",
+                          (int)targetFilters.size());
+#endif
         }
         
         // Handle web server
