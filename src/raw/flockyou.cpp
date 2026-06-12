@@ -36,7 +36,6 @@
 #define GPS_TX_PIN 43
 #define GPS_BAUD   9600
 #define GPS_HDOP_SCALE 5.0f
-#define FY_NEOPIXEL_PIN 4
 #endif
 #define FY_NEOPIXEL_BRIGHTNESS 50
 #define FY_NEOPIXEL_DETECTION_BRIGHTNESS 200
@@ -168,11 +167,7 @@ static SemaphoreHandle_t fyGPSMutex = NULL;   // guards fyGPS* globals
 // ============================================================================
 
 static bool fyBuzzerOn = true;
-#ifdef NESSO_N1
-static Adafruit_NeoPixel fyPixel(1, 0, NEO_GRB + NEO_KHZ800);
-#else
-static Adafruit_NeoPixel fyPixel(1, FY_NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
-#endif
+static Adafruit_NeoPixel fyPixel(1, BOARD_NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 static bool fyPixelAlertMode = false;
 static unsigned long fyPixelAlertStart = 0;
 static unsigned long fyLastBleScan = 0;
@@ -183,7 +178,6 @@ static unsigned long fyLastHB = 0;
 static NimBLEScan* fyBLEScan = NULL;
 static AsyncWebServer fyServer(80);
 static DNSServer flockyouDNS;
-static const bool fyWebEnabled = true;
 static bool fyRoutesRegistered = false;
 static bool fyServerStarted = false;
 static bool fyDnsStarted = false;
@@ -1430,12 +1424,6 @@ static void fyTryStartServer() {
         return;
     }
 
-    if (!fyWebEnabled) {
-        fyServerStarted = true;
-        printf("[FLOCK-YOU] Web dashboard disabled on N1 (BLE + display active)\n");
-        return;
-    }
-
     if (WiFi.softAPIP() == IPAddress(0, 0, 0, 0)) {
         return;
     }
@@ -1520,8 +1508,10 @@ void setup() {
     fyBLEScan->setInterval(100);
     fyBLEScan->setWindow(99);
 
-    // Kick off the first scan right away
-    fyBLEScan->start(BLE_SCAN_DURATION, false);
+    // Kick off the first scan right away. NimBLE-Arduino 2.x start() takes
+    // milliseconds (0 = continuous); the original code passed seconds, so it
+    // only listened for ~2 ms per cycle and saw almost nothing.
+    fyBLEScan->start(0, false);
     fyLastBleScan = millis();
     printf("[FLOCK-YOU] BLE scanning ACTIVE\n");
 
@@ -1537,9 +1527,7 @@ void setup() {
     printf("[FLOCK-YOU] IP: %s\n", WiFi.softAPIP().toString().c_str());
 
     // Register routes now; defer TCP bind to loop() so lwIP is ready on ESP32-C6.
-    if (fyWebEnabled) {
-        fyRegisterRoutes();
-    }
+    fyRegisterRoutes();
 
     printf("[FLOCK-YOU] Detection methods: MAC prefix, device name, manufacturer ID, Raven UUID\n");
     printf("[FLOCK-YOU] Dashboard: http://192.168.4.1 (starts after AP ready)\n");
@@ -1563,14 +1551,14 @@ void loop() {
                fyServerStarted ? "up" : "pending");
     }
 
-    // BLE scanning cycle
-    if (millis() - fyLastBleScan >= BLE_SCAN_INTERVAL && !fyBLEScan->isScanning()) {
-        fyBLEScan->start(BLE_SCAN_DURATION, false);
-        fyLastBleScan = millis();
+    // BLE scanning cycle: keep a continuous scan running and periodically clear
+    // the cached results to bound memory (detection happens in the callback).
+    if (!fyBLEScan->isScanning()) {
+        fyBLEScan->start(0, false);
     }
-
-    if (!fyBLEScan->isScanning() && millis() - fyLastBleScan > BLE_SCAN_DURATION * 1000) {
+    if (millis() - fyLastBleScan >= BLE_SCAN_INTERVAL) {
         fyBLEScan->clearResults();
+        fyLastBleScan = millis();
     }
 
     // Heartbeat tracking

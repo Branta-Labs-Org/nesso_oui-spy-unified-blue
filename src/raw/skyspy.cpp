@@ -203,11 +203,16 @@ void send_json_fast(const id_data *UAV) {
 // Mesh functionality removed - this is now a pure USB serial drone scanner
 
 void bleScanTask(void *parameter) {
+  // NimBLE-Arduino 2.x start() is in milliseconds (0 = continuous). The
+  // original start(1) scanned for 1 ms per loop and missed nearly everything.
+  pBLEScan->start(0, false);
   for (;;) {
-    pBLEScan->start(1, false);
+    if (!pBLEScan->isScanning()) {
+      pBLEScan->start(0, false);
+    }
     pBLEScan->clearResults();
     // No flag checking needed - BLE callback handles buzzer triggering
-    delay(100);
+    delay(1000);
   }
 }
 

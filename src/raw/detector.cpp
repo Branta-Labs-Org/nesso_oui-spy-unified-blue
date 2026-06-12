@@ -8,6 +8,7 @@
 #include <NimBLEScan.h>
 #include <NimBLEAdvertisedDevice.h>
 #include <esp_log.h>
+#include <esp_rom_sys.h>
 #include <esp_wifi.h>
 #include <nvs_flash.h>
 #include <vector>
@@ -16,18 +17,11 @@
 // ================================
 // NeoPixel Definitions
 // ================================
-#ifndef NESSO_N1
-#define NEOPIXEL_PIN 4
-#endif
 #define NEOPIXEL_COUNT 1
 #define NEOPIXEL_BRIGHTNESS 50
 #define NEOPIXEL_DETECTION_BRIGHTNESS 200
 
-#ifdef NESSO_N1
-Adafruit_NeoPixel strip(1, 0, NEO_GRB + NEO_KHZ800);
-#else
-Adafruit_NeoPixel strip(NEOPIXEL_COUNT, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
-#endif
+Adafruit_NeoPixel strip(NEOPIXEL_COUNT, BOARD_NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
 // NeoPixel state variables
 bool detectionMode = false;
@@ -62,9 +56,13 @@ unsigned long lastConfigActivity = 0;
 unsigned long modeSwitchScheduled = 0; // When to switch modes (0 = not scheduled)
 unsigned long deviceResetScheduled = 0; // When to reset device (0 = not scheduled)
 unsigned long normalRestartScheduled = 0; // When to do normal restart (0 = not scheduled)
+static bool configWebStarted = false;
 
 // Serial output synchronization - avoid concurrent writes
 volatile bool newMatchFound = false;
+static uint32_t bleAdsSeen = 0;
+static uint32_t bleAdsMatched = 0;
+static String lastBleSample = "";
 String detectedMAC = "";
 int detectedRSSI = 0;
 String matchedFilter = "";
@@ -115,7 +113,12 @@ void initializeSerial() {
 }
 
 bool isSerialConnected() {
+#ifdef NESSO_N1
+    // USB-CDC Serial is often false unless DTR is asserted; always emit on N1.
+    return true;
+#else
     return Serial;
+#endif
 }
 
 // ================================
@@ -447,11 +450,26 @@ bool isValidMAC(const String& mac) {
     return true;
 }
 
-bool matchesTargetFilter(const String& deviceMAC, String& matchedDescription) {
+bool matchesTargetFilter(const String& deviceMAC, String& matchedDescription, const String& deviceName = String()) {
     String normalizedDeviceMAC = deviceMAC;
     normalizeMACAddress(normalizedDeviceMAC);
     
     for (const TargetFilter& filter : targetFilters) {
+        // "name:<prefix>" filters match the advertised BLE name (case-insensitive)
+        if (filter.identifier.startsWith("name:")) {
+            if (deviceName.length()) {
+                String want = filter.identifier.substring(5);
+                want.toLowerCase();
+                String have = deviceName;
+                have.toLowerCase();
+                if (have.indexOf(want) >= 0) {
+                    matchedDescription = filter.description;
+                    return true;
+                }
+            }
+            continue;
+        }
+
         String filterID = filter.identifier;
         normalizeMACAddress(filterID);
         
@@ -2160,6 +2178,7 @@ void startConfigMode() {
     });
 
     server.begin();
+    configWebStarted = true;
 
     if (isSerialConnected()) {
         Serial.println("Web server started!");
@@ -2176,11 +2195,17 @@ class MyAdvertisedDeviceCallbacks: public NimBLEAdvertisedDeviceCallbacks {
         String mac = advertisedDevice->getAddress().toString().c_str();
         int rssi = advertisedDevice->getRSSI();
         unsigned long currentMillis = millis();
+        bleAdsSeen++;
+        String name = advertisedDevice->haveName() ? advertisedDevice->getName().c_str() : "";
+        if (lastBleSample.length() == 0) {
+            lastBleSample = mac + (name.length() ? (" name=" + name) : "");
+        }
 
         String matchedDescription;
-        bool matchFound = matchesTargetFilter(mac, matchedDescription);
+        bool matchFound = matchesTargetFilter(mac, matchedDescription, name);
         
         if (matchFound) {
+            bleAdsMatched++;
             bool known = false;
             for (auto& dev : devices) {
                 if (dev.macAddress == mac) {
@@ -2245,6 +2270,12 @@ class MyAdvertisedDeviceCallbacks: public NimBLEAdvertisedDeviceCallbacks {
                 newMatchFound = true;
                 
                 threeBeeps();
+#ifdef NESSO_N1
+                nessoUiUpdateRssi(rssi);
+                nessoUiSetDetectionCount((int)devices.size());
+                nessoUiSetStatus(mac.c_str());
+                nessoUiFlashAlert();
+#endif
                 
                 auto& dev = devices.back();
                 dev.inCooldown = true;
@@ -2256,13 +2287,7 @@ class MyAdvertisedDeviceCallbacks: public NimBLEAdvertisedDeviceCallbacks {
 
 void startScanningMode() {
     currentMode = SCANNING_MODE;
-    
-    // Stop web server, captive portal DNS, and WiFi
-    detectorDNS.stop();
-    server.end();
-    WiFi.softAPdisconnect(true);
-    WiFi.mode(WIFI_OFF);
-    
+
     if (isSerialConnected()) {
         Serial.println("\n=== STARTING SCANNING MODE ===");
         Serial.println("Configured Filters:");
@@ -2271,7 +2296,22 @@ void startScanningMode() {
             Serial.println("- " + filter.identifier + " (" + type + "): " + filter.description);
         }
         Serial.println("==============================\n");
+        Serial.flush();
     }
+
+#ifdef NESSO_N1
+    nessoUiSetMode("Detector");
+    nessoUiSetStatus("Scanning...");
+#else
+    // Stop web server, captive portal DNS, and WiFi
+    if (configWebStarted) {
+        detectorDNS.stop();
+        server.end();
+        configWebStarted = false;
+    }
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_OFF);
+#endif
     
     // Initialize BLE (but don't start scanning yet)
     NimBLEDevice::init("");
@@ -2293,9 +2333,11 @@ void startScanningMode() {
     // 2-second pause after ready signal
     delay(2000);
     
-    // NOW start BLE scanning - after ready signal is complete
+    // NOW start BLE scanning - after ready signal is complete.
+    // NimBLE-Arduino 2.x: start(duration_ms, ...); 0 = scan continuously.
+    // (Original firmware targeted 1.x where the arg was SECONDS.)
     if (pBLEScan != nullptr) {
-        pBLEScan->start(3, false);
+        pBLEScan->start(0, false);
         
         if (isSerialConnected()) {
             Serial.println("BLE scanning started!");
@@ -2527,11 +2569,11 @@ void loop() {
             newMatchFound = false;
         }
         
-        // Restart BLE scan every 3 seconds
+        // Continuous scan: just re-arm if it ever stopped (NimBLE 2.x: ms, 0=forever)
         if (currentMillis - lastScanTime >= 3000) {
-            pBLEScan->stop();
-            delay(10);
-            pBLEScan->start(2, false);
+            if (pBLEScan != nullptr && !pBLEScan->isScanning()) {
+                pBLEScan->start(0, false);
+            }
             lastScanTime = currentMillis;
         }
 
@@ -2541,9 +2583,19 @@ void loop() {
             lastCleanupTime = currentMillis;
         }
 
-        // Status report disabled - using JSON output only
+        // Periodic liveness/summary. Use esp_rom_printf so it reaches the
+        // USB-Serial/JTAG console (Arduino Serial/HWCDC is unreliable headless).
         if (currentMillis - lastStatusTime >= 30000) {
             lastStatusTime = currentMillis;
+#ifdef NESSO_N1
+            esp_rom_printf("[DETECTOR] scan: ads=%lu matches=%lu sample=%s\n",
+                          (unsigned long)bleAdsSeen,
+                          (unsigned long)bleAdsMatched,
+                          lastBleSample.length() ? lastBleSample.c_str() : "-");
+            bleAdsSeen = 0;
+            bleAdsMatched = 0;
+            lastBleSample = "";
+#endif
         }
     }
     
