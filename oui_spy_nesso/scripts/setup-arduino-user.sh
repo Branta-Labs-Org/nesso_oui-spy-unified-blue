@@ -67,6 +67,6 @@ mkdir -p "$ROOT/raw"
 cp "$SRC"/raw/* "$ROOT/raw/"
 
 echo "Arduino user libraries ready at $USER_DIR"
-echo "  AsyncTCP            -> $ASYNC/AsyncTCP (patched 3.4.10, MARK_TCPIP_TASK)"
+echo "  AsyncTCP            -> $ASYNC/AsyncTCP (patched 3.4.10, QUERY_HOLDER core guard)"
 echo "  ESP_Async_WebServer -> $ASYNC/ESP_Async_WebServer (3.11.1)"
 echo "Sketch sources mirrored from $SRC (generated, git-ignored)"

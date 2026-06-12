@@ -76,9 +76,13 @@ namespace {
 struct tcp_core_guard {
   bool do_lock;
   inline tcp_core_guard() : do_lock(false) {
-    // Use MARK_TCPIP_TASK, not QUERY_HOLDER: holder flag can be stale on
-    // the async_tcp task and skip LOCK_TCPIP_CORE(), causing tcp_alloc assert.
-    if (!sys_thread_tcpip(LWIP_CORE_MARK_TCPIP_TASK)) {
+    // QUERY_HOLDER: true if lwIP isn't initialized yet, or if the current
+    // task already holds the TCPIP core lock (incl. the tcpip task itself,
+    // which marks itself holder while processing). Only lock otherwise.
+    // NEVER use LWIP_CORE_MARK_TCPIP_TASK here: it is reserved for the
+    // tcpip thread's one-time self-registration and LWIP_ASSERTs (panic +
+    // reboot) on any later call once the stack is up.
+    if (!sys_thread_tcpip(LWIP_CORE_LOCK_QUERY_HOLDER)) {
       LOCK_TCPIP_CORE();
       do_lock = true;
     }
