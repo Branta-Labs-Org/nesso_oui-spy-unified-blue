@@ -7,3 +7,16 @@
 __pycache__/
 .venv/
 .arduino-cli-user/
+
+# Generated Nesso sketch sources — canonical copies live in src/, mirrored in
+# by scripts/setup-arduino-user.sh. Edit src/, never oui_spy_nesso/ copies.
+oui_spy_nesso/*.cpp
+oui_spy_nesso/*.c
+oui_spy_nesso/*.h
+oui_spy_nesso/raw/
+
+# arduino-cli build output (deterministic --build-path)
+build-nesso/
+
+# Upstream import sidecars from sync.sh (for manual merge, not committed)
+*.upstream

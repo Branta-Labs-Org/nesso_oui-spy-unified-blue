@@ -344,7 +344,8 @@ static void startSelector() {
     selectorServer.on("/select", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (request->hasParam("mode")) {
             int mode = request->getParam("mode")->value().toInt();
-            if (mode >= 1 && mode <= 5) {
+            // Mode 3 (UniPwn) is not part of this firmware; only 1,2,4,5 exist.
+            if (mode == 1 || mode == 2 || mode == 4 || mode == 5) {
                 Serial.printf("[OUI-SPY] USER SELECTED MODE %d - Storing and rebooting\n", mode);
                 
                 // Clear reset flag so double-reset detection doesn't override on next boot
@@ -376,7 +377,7 @@ static void startSelector() {
             }
         }
         Serial.println("[OUI-SPY] Invalid mode selection rejected");
-        request->send(400, "text/plain", "Invalid mode (1-5)");
+        request->send(400, "text/plain", "Invalid mode (1, 2, 4, 5)");
     });
     
     // Save AP settings endpoint
@@ -537,7 +538,7 @@ void setup() {
         foxhunter_setup();
     } else if (currentMode == 4) {
         Serial.println("[OUI-SPY] >>> STARTING FLOCK-YOU (mode 4) <<<");
-        Serial.println("[OUI-SPY] No WiFi AP (BLE only)");
+        Serial.println("[OUI-SPY] AP: flockyou (web dashboard at 192.168.4.1)");
         Serial.flush();
         nessoUiSetMode("Flock-You");
         flockyou_setup();

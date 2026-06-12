@@ -18,6 +18,9 @@
 #define BUZZER_FREQ 4000
 #define BUZZER_DUTY 127
 #define HAS_NEOPIXEL 0
+// No physical NeoPixel on the N1; the Adafruit_NeoPixel shim ignores the pin
+// and routes colors to the display/LED. Value is a harmless placeholder.
+#define BOARD_NEOPIXEL_PIN 0
 
 inline void boardLedcConfigure(uint32_t freq) {
   ledcAttach(BUZZER_PIN, freq, 8);
@@ -45,6 +48,8 @@ inline void boardLedcTone(uint32_t freq) {
 #define BUZZER_FREQ 2000
 #define BUZZER_DUTY 127
 #define HAS_NEOPIXEL 1
+// Physical NeoPixel on the XIAO ESP32-S3 (GPIO4 / D3).
+#define BOARD_NEOPIXEL_PIN 4
 
 inline void boardLedcConfigure(uint32_t freq) {
   ledcSetup(0, freq, 8);

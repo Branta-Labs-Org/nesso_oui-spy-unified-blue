@@ -32,9 +32,6 @@
 #include "board_neopixel.h"
 #include "nesso_ui.h"
 #include "nimble_compat.h"
-#ifndef NESSO_N1
-#include <TinyGPS++.h>
-#endif
 #include "modes.h"
 
 // Rename setup/loop

@@ -1,6 +1,10 @@
 # Project-local Arduino CLI config for Nesso builds.
 # Uses .arduino-cli-user/ (see scripts/setup-arduino-user.sh) so the patched
 # vendored AsyncTCP is linked instead of ~/Documents/Arduino/libraries/AsyncTCP@1.1.4.
+#
+# Build/upload through scripts/compile-nesso.sh: it injects the build flags via
+# --build-property and auto-detects the board's serial port. No board is
+# hardwired here so any attached Nesso N1 works.
 
 board_manager:
   additional_urls:
@@ -10,14 +14,3 @@ directories:
   user: .arduino-cli-user
 
 default_fqbn: esp32:esp32:arduino_nesso_n1
-default_port: /dev/cu.usbmodem14401
-
-build_flags:
-  -DNESSO_N1=1
-  -DNESSO_DISPLAY_UI=1
-  -DCONFIG_BT_NIMBLE_ENABLED=1
-  -DCONFIG_LWIP_TCPIP_CORE_LOCKING=1
-  -Iraw
-
-library_paths:
-  - libraries

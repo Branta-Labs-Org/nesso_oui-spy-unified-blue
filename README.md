@@ -116,12 +116,15 @@ Build from `oui_spy_nesso/` with `arduino-cli`. **Use the project build script**
 
 ```bash
 cd oui_spy_nesso
-./scripts/compile-nesso.sh --upload /dev/cu.usbmodem14401
+./scripts/compile-nesso.sh            # compile only
+./scripts/compile-nesso.sh --upload   # compile + flash (port auto-detected)
 ```
 
-The script creates `.arduino-cli-user/` (symlinks to your global libs except `AsyncTCP`, which comes from `oui_spy_nesso/libraries/AsyncTCP`). Plain `arduino-cli compile` may pick up the old `~/Documents/Arduino/libraries/AsyncTCP@1.1.4` and crash when starting the web server.
+The board's serial port is detected automatically (Espressif USB VID `0x303A`); pass one explicitly only if you have several ESP32s attached: `--upload /dev/cu.usbmodemXXXX`.
 
-See also `oui_spy_nesso/arduino-cli-nesso.yaml`.
+The script creates `.arduino-cli-user/` (symlinks to your global libs) and links the patched `AsyncTCP` + `ESP_Async_WebServer` from `lib/async_web/` — the same copies the PlatformIO build uses. Plain `arduino-cli compile` may pick up the old `~/Documents/Arduino/libraries/AsyncTCP@1.1.4` and crash when starting the web server.
+
+**Single source of truth:** the firmware lives in `src/` only. `compile-nesso.sh` mirrors `src/` into the sketch dir at build time, so `oui_spy_nesso/*.cpp` and `oui_spy_nesso/raw/` are *generated and git-ignored* — **edit `src/`, never the sketch copies.** After a build, the verifier confirms the patched AsyncTCP was actually linked. See also `oui_spy_nesso/arduino-cli-nesso.yaml`.
 
 | Control | Location | Function |
 |---------|----------|----------|
