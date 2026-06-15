@@ -8,9 +8,12 @@
 //   4. Raven gunshot detector service UUID matching
 //   5. Raven firmware version estimation from service UUID patterns
 //
-// WiFi AP "flockyou" / "flockyou123" serves web dashboard at 192.168.4.1
+// Default: COLLECT mode — BLE at ~100% radio duty, WiFi off (max data capture).
+// Double-click KEY1 (front button) toggles DASHBOARD mode: ~70% BLE / ~30% WiFi
+// so the softAP can beacon and clients reach http://192.168.4.1.
+// Hold KEY1 ~1.5s (handled in main.cpp) still returns to the mode selector.
+// AP "flockyou" / "flockyou123" — only active in dashboard mode.
 // All detections stored in memory, exportable as JSON or CSV
-// Optional WiFi STA connection for future features
 // ============================================================================
 
 #include <Arduino.h>
@@ -51,7 +54,13 @@
 
 // BLE scanning
 #define BLE_SCAN_DURATION 2      // seconds per scan
-#define BLE_SCAN_INTERVAL 3000   // ms between scans
+#define BLE_SCAN_INTERVAL 3000   // ms between clearing cached scan results
+
+// ESP32-C6 radio sharing: one antenna, BLE scan window vs softAP idle time.
+#define FY_BLE_SLOT_MS              100
+#define FY_BLE_COLLECT_WINDOW_MS      99   // ~100% BLE (default collect mode)
+#define FY_BLE_DASHBOARD_WINDOW_MS    70   // ~70% BLE / ~30% WiFi for softAP
+#define FY_KEY1_DCLICK_MS             450  // max gap between KEY1 clicks
 
 // Detection storage
 #define MAX_DETECTIONS 200
@@ -182,6 +191,15 @@ static bool fyRoutesRegistered = false;
 static bool fyServerStarted = false;
 static bool fyDnsStarted = false;
 static unsigned long fyApStartMs = 0;
+
+enum FyRadioProfile : uint8_t {
+    FY_RADIO_COLLECT = 0,    // WiFi off, max BLE duty (default)
+    FY_RADIO_DASHBOARD = 1,  // softAP up, 70/30 BLE/WiFi split
+};
+static FyRadioProfile fyRadioProfile = FY_RADIO_COLLECT;
+static bool fyKey1WasDown = false;
+static uint8_t fyKey1ClickCount = 0;
+static unsigned long fyKey1LastReleaseMs = 0;
 
 // Phone GPS state (updated via browser Geolocation API -> /api/gps)
 static double fyGPSLat = 0;
@@ -1168,6 +1186,124 @@ refresh();setInterval(refresh,2500);
 )rawliteral";
 
 // ============================================================================
+// RADIO PROFILE (collect vs dashboard)
+// ============================================================================
+
+static void fyRegisterRoutes();
+
+static void fyModeConfirmBeep() {
+    boardLedcConfigure(BUZZER_FREQ);
+    boardBuzzerAttach();
+    boardLedcSetDuty(40);
+    delay(60);
+    boardLedcSetDuty(0);
+}
+
+static void fyApplyBleDuty(uint16_t windowMs) {
+#ifndef FY_DIAG_DISABLE_BLE
+    if (!fyBLEScan) {
+        return;
+    }
+    bool wasScanning = fyBLEScan->isScanning();
+    if (wasScanning) {
+        fyBLEScan->stop();
+    }
+    fyBLEScan->setInterval(FY_BLE_SLOT_MS);
+    fyBLEScan->setWindow(windowMs);
+    fyBLEScan->start(0, false);
+    fyLastBleScan = millis();
+    printf("[FLOCK-YOU] BLE duty %ums/%ums (%s)\n",
+           windowMs, FY_BLE_SLOT_MS,
+           fyRadioProfile == FY_RADIO_COLLECT ? "COLLECT" : "DASHBOARD");
+#endif
+}
+
+static void fyStopDashboardServices() {
+    if (fyServerStarted) {
+        fyServer.end();
+        fyServerStarted = false;
+        printf("[FLOCK-YOU] Web server stopped\n");
+    }
+    if (fyDnsStarted) {
+        flockyouDNS.stop();
+        fyDnsStarted = false;
+        printf("[FLOCK-YOU] Captive DNS stopped\n");
+    }
+}
+
+static void fyEnterCollectMode() {
+    if (fyRadioProfile == FY_RADIO_COLLECT) {
+        return;
+    }
+    printf("[FLOCK-YOU] COLLECT mode: BLE ~100%%, WiFi off\n");
+    fyStopDashboardServices();
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_OFF);
+    delay(50);
+    fyRadioProfile = FY_RADIO_COLLECT;
+    fyApplyBleDuty(FY_BLE_COLLECT_WINDOW_MS);
+    nessoUiSetStatus("Collect mode");
+    fyModeConfirmBeep();
+}
+
+static void fyEnterDashboardMode() {
+    if (fyRadioProfile == FY_RADIO_DASHBOARD) {
+        return;
+    }
+    printf("[FLOCK-YOU] DASHBOARD mode: BLE ~70%% / WiFi ~30%%\n");
+    fyApplyBleDuty(FY_BLE_DASHBOARD_WINDOW_MS);
+
+    WiFi.mode(WIFI_AP);
+    delay(100);
+    if (!WiFi.softAP(FY_AP_SSID, FY_AP_PASS)) {
+        printf("[FLOCK-YOU] softAP start FAILED — staying in collect mode\n");
+        fyApplyBleDuty(FY_BLE_COLLECT_WINDOW_MS);
+        nessoUiSetStatus("AP failed");
+        return;
+    }
+    fyApStartMs = millis();
+    fyRadioProfile = FY_RADIO_DASHBOARD;
+    if (!fyRoutesRegistered) {
+        fyRegisterRoutes();
+    }
+    nessoUiSetStatus("Dashboard: flockyou");
+    printf("[FLOCK-YOU] AP: %s / %s  http://%s\n",
+           FY_AP_SSID, FY_AP_PASS, WiFi.softAPIP().toString().c_str());
+    fyModeConfirmBeep();
+}
+
+static void fyToggleRadioProfile() {
+    if (fyRadioProfile == FY_RADIO_COLLECT) {
+        fyEnterDashboardMode();
+    } else {
+        fyEnterCollectMode();
+    }
+}
+
+static void fyPollKey1DoubleClick() {
+    bool down = boardMenuButtonPressed();
+    unsigned long now = millis();
+
+    if (down && !fyKey1WasDown) {
+        fyKey1WasDown = true;
+    } else if (!down && fyKey1WasDown) {
+        fyKey1WasDown = false;
+        if (now - fyKey1LastReleaseMs <= FY_KEY1_DCLICK_MS) {
+            fyKey1ClickCount++;
+        } else {
+            fyKey1ClickCount = 1;
+        }
+        fyKey1LastReleaseMs = now;
+        if (fyKey1ClickCount >= 2) {
+            fyKey1ClickCount = 0;
+            fyToggleRadioProfile();
+        }
+    } else if (fyKey1ClickCount > 0 && (now - fyKey1LastReleaseMs) > FY_KEY1_DCLICK_MS) {
+        fyKey1ClickCount = 0;
+    }
+}
+
+// ============================================================================
 // WEB SERVER SETUP
 // ============================================================================
 
@@ -1500,18 +1636,13 @@ void setup() {
     printf("  GPS: auto-detect (L76K on D6/D7)\n");
     printf("========================================\n");
 
-    // Init BLE scanner FIRST -- start scanning immediately
+    // Init BLE scanner — start at ~100% duty (collect mode, WiFi off).
     NimBLEDevice::init("");
     fyBLEScan = NimBLEDevice::getScan();
     fyBLEScan->setScanCallbacks(new FYBLECallbacks(), true);
     fyBLEScan->setActiveScan(true);
-    // ESP32-C6 shares one 2.4GHz radio between BLE and WiFi. A ~100% scan
-    // duty cycle (window == interval) starves the softAP of airtime - it
-    // cannot even beacon, so the dashboard network disappears. Espressif's
-    // coexistence guidance (esp-idf #4940): the AP only gets the idle part
-    // of each scan interval, so keep the window well under the interval.
-    fyBLEScan->setInterval(100);
-    fyBLEScan->setWindow(30);
+    fyBLEScan->setInterval(FY_BLE_SLOT_MS);
+    fyBLEScan->setWindow(FY_BLE_COLLECT_WINDOW_MS);
 
     // Kick off the first scan right away. NimBLE-Arduino 2.x start() takes
     // milliseconds (0 = continuous); the original code passed seconds, so it
@@ -1521,32 +1652,28 @@ void setup() {
 #else
     fyBLEScan->start(0, false);
     fyLastBleScan = millis();
-    printf("[FLOCK-YOU] BLE scanning ACTIVE\n");
+    printf("[FLOCK-YOU] BLE scanning ACTIVE (collect mode, ~100%% duty)\n");
 #endif
 
     // Crow calls play WHILE BLE is already scanning
     fyBootBeep();
 
-    // Start WiFi AP (no need to connect to anything -- AP only)
-    WiFi.mode(WIFI_AP);
-    delay(100);
-    WiFi.softAP(FY_AP_SSID, FY_AP_PASS);
-    fyApStartMs = millis();
-    printf("[FLOCK-YOU] AP: %s / %s\n", FY_AP_SSID, FY_AP_PASS);
-    printf("[FLOCK-YOU] IP: %s\n", WiFi.softAPIP().toString().c_str());
-
-    // Register routes now; defer TCP bind to loop() so lwIP is ready on ESP32-C6.
-    fyRegisterRoutes();
-
+    fyRadioProfile = FY_RADIO_COLLECT;
+    nessoUiSetStatus("Collect mode");
+    printf("[FLOCK-YOU] WiFi AP off — double-click KEY1 (front) for dashboard\n");
+    printf("[FLOCK-YOU] Hold KEY1 ~1.5s for mode selector\n");
     printf("[FLOCK-YOU] Detection methods: MAC prefix, device name, manufacturer ID, Raven UUID\n");
-    printf("[FLOCK-YOU] Dashboard: http://192.168.4.1 (starts after AP ready)\n");
-    printf("[FLOCK-YOU] Ready - BLE scanning active\n\n");
+    printf("[FLOCK-YOU] Ready - collecting BLE data\n\n");
 }
 
 void loop() {
-    fyTryStartServer();
-    if (fyDnsStarted) {
-        flockyouDNS.processNextRequest();  // Captive portal DNS
+    fyPollKey1DoubleClick();
+
+    if (fyRadioProfile == FY_RADIO_DASHBOARD) {
+        fyTryStartServer();
+        if (fyDnsStarted) {
+            flockyouDNS.processNextRequest();  // Captive portal DNS
+        }
     }
     fyProcessHardwareGPS();
     fyUpdatePixel();
@@ -1554,10 +1681,11 @@ void loop() {
     static unsigned long lastStatusLog = 0;
     if (millis() - lastStatusLog >= 30000) {
         lastStatusLog = millis();
-        printf("[FLOCK-YOU] status: hits=%d in_range=%s server=%s\n",
+        printf("[FLOCK-YOU] status: hits=%d in_range=%s radio=%s server=%s\n",
                fyDetCount,
                fyDeviceInRange ? "yes" : "no",
-               fyServerStarted ? "up" : "pending");
+               fyRadioProfile == FY_RADIO_COLLECT ? "collect" : "dashboard",
+               (fyRadioProfile == FY_RADIO_DASHBOARD && fyServerStarted) ? "up" : "off");
     }
 
     // BLE scanning cycle: keep a continuous scan running and periodically clear
