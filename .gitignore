@@ -13,6 +13,7 @@ __pycache__/
 oui_spy_nesso/*.cpp
 oui_spy_nesso/*.c
 oui_spy_nesso/*.h
+oui_spy_nesso/partitions.csv
 oui_spy_nesso/raw/
 
 # arduino-cli build output (deterministic --build-path)

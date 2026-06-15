@@ -66,6 +66,10 @@ rm -rf "$ROOT/raw"
 mkdir -p "$ROOT/raw"
 cp "$SRC"/raw/* "$ROOT/raw/"
 
+# Partition table with a spiffs region (required for Flock-You session persistence).
+# Must be named partitions.csv — Arduino prebuild copies sketch/partitions.csv first.
+cp "$PROJECT/partitions_nesso.csv" "$ROOT/partitions.csv"
+
 echo "Arduino user libraries ready at $USER_DIR"
 echo "  AsyncTCP            -> $ASYNC/AsyncTCP (patched 3.4.10, QUERY_HOLDER core guard)"
 echo "  ESP_Async_WebServer -> $ASYNC/ESP_Async_WebServer (3.11.1)"
